@@ -27,6 +27,9 @@ var recentBookedSlotId = null;
 var ALLIANCE_STORAGE_KEY = "svs_recent_alliances";
 var MY_BOOKING_KEY = "svs_my_booking_info";
 
+/* =========================
+   utils
+========================= */
 function padTime(h, m) {
   if (m >= 60) {
     h += Math.floor(m / 60);
@@ -59,6 +62,13 @@ function simpleHash(value) {
   return "h_" + Math.abs(hash);
 }
 
+function parseLocalDateTime(value) {
+  if (!value) return null;
+  var date = new Date(value);
+  if (isNaN(date.getTime())) return null;
+  return date;
+}
+
 function showToast(message, type) {
   var container = document.getElementById("toastContainer");
   if (!container) return;
@@ -66,7 +76,6 @@ function showToast(message, type) {
   var toast = document.createElement("div");
   toast.className = "toast" + (type ? " " + type : "");
   toast.textContent = message;
-
   container.appendChild(toast);
 
   setTimeout(function () {
@@ -77,6 +86,9 @@ function showToast(message, type) {
   }, 2200);
 }
 
+/* =========================
+   local storage helpers
+========================= */
 function getSavedAlliances() {
   try {
     var raw = localStorage.getItem(ALLIANCE_STORAGE_KEY);
@@ -106,10 +118,8 @@ function renderAllianceSuggestions() {
   var list = document.getElementById("allianceSuggestions");
   if (!list) return;
 
-  var items = getSavedAlliances();
   list.innerHTML = "";
-
-  items.forEach(function (item) {
+  getSavedAlliances().forEach(function (item) {
     var option = document.createElement("option");
     option.value = item;
     list.appendChild(option);
@@ -141,56 +151,36 @@ function isMyReservation(slot) {
          normalizeText(mine.alliance) === normalizeText(slot.alliance);
 }
 
+/* =========================
+   booking setting helpers
+========================= */
 function getTabSetting(buff) {
   var base = { manualOpen: true, openAt: "", closeAt: "" };
   var current = (bookingSettings.tabs && bookingSettings.tabs[buff]) || {};
   return Object.assign({}, base, current);
 }
 
-function parseLocalDateTime(value) {
-  if (!value) return null;
-  var date = new Date(value);
-  if (isNaN(date.getTime())) return null;
-  return date;
-}
-
 function isBuffBookingOpen(buff) {
   var setting = getTabSetting(buff);
   var now = new Date();
-
-  if (!setting.manualOpen) return false;
-
   var openAt = parseLocalDateTime(setting.openAt);
   var closeAt = parseLocalDateTime(setting.closeAt);
 
+  if (!setting.manualOpen) return false;
   if (openAt && now < openAt) return false;
   if (closeAt && now > closeAt) return false;
 
   return true;
 }
 
-function updateTabBookingStateText() {
-  var el = document.getElementById("tabBookingState");
-  if (!el) return;
-
-  var setting = getTabSetting(currentBuff);
-  var open = isBuffBookingOpen(currentBuff);
-  var parts = [
-    "Current tab: " + currentBuff,
-    open ? "Booking Open" : "Booking Closed"
-  ];
-
-  if (setting.openAt) parts.push("Open At: " + setting.openAt.replace("T", " "));
-  if (setting.closeAt) parts.push("Close At: " + setting.closeAt.replace("T", " "));
-
-  el.textContent = parts.join(" / ");
-}
-
+/* =========================
+   SVS countdown
+========================= */
 function getBaseDate() {
-  var raw = bookingSettings.baseDate || "2026-03-28";
+  var raw = bookingSettings.baseDate || "2026-03-23";
   var date = new Date(raw + "T12:00:00Z");
   if (isNaN(date.getTime())) {
-    date = new Date("2026-03-28T12:00:00Z");
+    date = new Date("2026-03-23T12:00:00Z");
   }
   return date;
 }
@@ -214,7 +204,8 @@ function updateCountdown() {
   var diff = svsDate - now;
 
   if (diff <= 0) {
-    document.getElementById("countdown").innerText = "SVS has begun";
+    var countdownEl = document.getElementById("countdown");
+    if (countdownEl) countdownEl.innerText = "SVS has begun";
     return;
   }
 
@@ -222,8 +213,10 @@ function updateCountdown() {
   var h = Math.floor((diff / (1000 * 60 * 60)) % 24);
   var m = Math.floor((diff / (1000 * 60)) % 60);
 
-  document.getElementById("countdown").innerText =
-    "Next SVS begins in " + d + "d " + h + "h " + m + "m";
+  var countdown = document.getElementById("countdown");
+  if (countdown) {
+    countdown.innerText = "Next SVS begins in " + d + "d " + h + "h " + m + "m";
+  }
 
   var cycleInfo = document.getElementById("svsCycleInfo");
   if (cycleInfo) {
@@ -238,6 +231,56 @@ function updateCountdown() {
   }
 }
 
+function updateTabBookingStateText() {
+  var el = document.getElementById("tabBookingState");
+  if (!el) return;
+
+  var setting = getTabSetting(currentBuff);
+  var now = new Date();
+  var openAt = parseLocalDateTime(setting.openAt);
+  var closeAt = parseLocalDateTime(setting.closeAt);
+
+  if (!setting.manualOpen) {
+    el.textContent = "Booking locked by admin";
+    return;
+  }
+
+  if (openAt && now < openAt) {
+    var diff = openAt - now;
+    var d = Math.floor(diff / (1000 * 60 * 60 * 24));
+    var h = Math.floor((diff / (1000 * 60 * 60)) % 24);
+    var m = Math.floor((diff / (1000 * 60)) % 60);
+
+    el.textContent = "Booking opens in " + d + "d " + h + "h " + m + "m";
+    return;
+  }
+
+  if (closeAt && now > closeAt) {
+    el.textContent = "Booking closed";
+    return;
+  }
+
+  if (closeAt && now <= closeAt) {
+    var remain = closeAt - now;
+    var rd = Math.floor(remain / (1000 * 60 * 60 * 24));
+    var rh = Math.floor((remain / (1000 * 60 * 60)) % 24);
+    var rm = Math.floor((remain / (1000 * 60)) % 60);
+
+    el.textContent = "Booking closes in " + rd + "d " + rh + "h " + rm + "m";
+    return;
+  }
+
+  el.textContent = "Booking open";
+}
+
+function refreshTimeTexts() {
+  updateCountdown();
+  updateTabBookingStateText();
+}
+
+/* =========================
+   tabs / selection
+========================= */
 function setActiveTab() {
   var buttons = document.querySelectorAll(".tabs button");
   buttons.forEach(function (btn) {
@@ -262,11 +305,8 @@ function clearSelection() {
 function highlightSlot(div, isAvailable) {
   clearSelection();
   div.classList.add("selected");
-  if (isAvailable) {
-    div.classList.add("highlightAvailable");
-  } else {
-    div.classList.add("highlightReserved");
-  }
+  if (isAvailable) div.classList.add("highlightAvailable");
+  else div.classList.add("highlightReserved");
 }
 
 function switchBuff(buff) {
@@ -274,25 +314,32 @@ function switchBuff(buff) {
   setActiveTab();
   populateScheduleInputs();
   renderAll();
+  updateTabBookingStateText();
 }
 
+/* =========================
+   modal helpers
+========================= */
 function formatSlotInfo(slotId) {
   if (!slotId) return "";
+
   var parts = slotId.split("_");
   var buff = parts[0];
   var start = parts[1];
-  var endParts = start.split(":");
-  var end = padTime(Number(endParts[0]), Number(endParts[1]) + 30);
+  var startParts = start.split(":");
+  var end = padTime(Number(startParts[0]), Number(startParts[1]) + 30);
 
   var date = new Date();
-  date.setUTCHours(Number(endParts[0]), Number(endParts[1]), 0, 0);
+  date.setUTCHours(Number(startParts[0]), Number(startParts[1]), 0, 0);
   var localEndDate = new Date(date.getTime() + 30 * 60 * 1000);
 
   return [
     "Buff: " + buff,
     "UTC: " + start + " - " + end,
-    "Local: " + date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) +
-      " - " + localEndDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    "Local: " +
+      date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) +
+      " - " +
+      localEndDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   ].join("<br>");
 }
 
@@ -330,11 +377,16 @@ function openReservedModal(id) {
 
   var detail = document.getElementById("reservedDetail");
   if (detail && slot) {
-    detail.innerHTML =
+    var html =
       "Alliance: " + escapeHtml(slot.alliance || "-") + "<br>" +
       "Player: " + escapeHtml(slot.player || "-") + "<br>" +
-      "Use Speed-up: " + escapeHtml(slot.daysSaved || 0) + "<br>" +
-      (slot.adminNote && adminAuthenticated ? ("Admin Note: " + escapeHtml(slot.adminNote)) : "");
+      "Use Speed-up: " + escapeHtml(slot.daysSaved || 0);
+
+    if (slot.adminNote && adminAuthenticated) {
+      html += "<br>Admin Note: " + escapeHtml(slot.adminNote);
+    }
+
+    detail.innerHTML = html;
   }
 
   var editAlliance = document.getElementById("editAlliance");
@@ -355,14 +407,19 @@ function openReservedModal(id) {
 
 function closeReservedModal() {
   document.getElementById("reservedModal").classList.remove("show");
+
   ["editAlliance", "editDaysSaved", "editPassword"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.value = "";
   });
+
   selectedSlot = null;
   clearSelection();
 }
 
+/* =========================
+   admin
+========================= */
 function openAdmin() {
   document.getElementById("adminPanel").classList.add("show");
   populateScheduleInputs();
@@ -378,6 +435,7 @@ function closeAdmin() {
 function updateAdminSelectedSlotLabel() {
   var label = document.getElementById("adminSelectedSlotLabel");
   if (!label) return;
+
   label.textContent = adminSlotTarget ? ("선택 슬롯: " + adminSlotTarget) : "선택된 슬롯 없음";
 
   var noteInput = document.getElementById("adminNoteInput");
@@ -439,6 +497,7 @@ function checkAdminStatus() {
     .then(function (doc) {
       adminAuthenticated = doc.exists;
       updateAdminUI();
+
       if (adminAuthenticated) {
         showToast("관리자 인증 완료", "success");
         loadLogs();
@@ -484,16 +543,12 @@ function setManualBooking(buff, isOpen) {
 
   db.collection("settings").doc("booking").set(data, { merge: true })
     .then(function () {
-
-      // 🔥 로컬 상태 즉시 반영
       if (!bookingSettings.tabs) bookingSettings.tabs = {};
       if (!bookingSettings.tabs[buff]) {
         bookingSettings.tabs[buff] = { manualOpen: true, openAt: "", closeAt: "" };
       }
 
       bookingSettings.tabs[buff].manualOpen = isOpen;
-
-      // 🔥 UI 즉시 반영
       renderAll();
 
       return logAction("set_manual_booking", {
@@ -536,6 +591,16 @@ function saveTabSchedule() {
 
   db.collection("settings").doc("booking").set(data, { merge: true })
     .then(function () {
+      if (!bookingSettings.tabs) bookingSettings.tabs = {};
+      if (!bookingSettings.tabs[currentBuff]) {
+        bookingSettings.tabs[currentBuff] = { manualOpen: true, openAt: "", closeAt: "" };
+      }
+
+      bookingSettings.tabs[currentBuff].openAt = openAt;
+      bookingSettings.tabs[currentBuff].closeAt = closeAt;
+
+      renderAll();
+
       return logAction("save_schedule", {
         buff: currentBuff,
         openAt: openAt,
@@ -562,11 +627,12 @@ function saveSvsBaseDate() {
 
   db.collection("settings").doc("booking").set({ baseDate: value }, { merge: true })
     .then(function () {
+      bookingSettings.baseDate = value;
+      refreshTimeTexts();
       return logAction("save_base_date", { baseDate: value });
     })
     .then(function () {
       showToast("SVS 기준일이 저장되었습니다.", "success");
-      updateCountdown();
     })
     .catch(function (error) {
       console.error("saveSvsBaseDate error:", error);
@@ -574,6 +640,9 @@ function saveSvsBaseDate() {
     });
 }
 
+/* =========================
+   search / filter
+========================= */
 function getFilteredSlotIds() {
   var search = normalizeText((document.getElementById("searchInput") || {}).value || "");
   var filterStatus = (document.getElementById("filterStatus") || {}).value || "all";
@@ -601,6 +670,18 @@ function getFilteredSlotIds() {
   });
 }
 
+function clearSearch() {
+  var input = document.getElementById("searchInput");
+  var filter = document.getElementById("filterStatus");
+
+  if (input) input.value = "";
+  if (filter) filter.value = "all";
+  renderAll();
+}
+
+/* =========================
+   render
+========================= */
 function updateCounts(filteredIds) {
   var reserved = 0;
   var available = 0;
@@ -616,12 +697,18 @@ function updateCounts(filteredIds) {
     }
   });
 
-  document.getElementById("availableCount").innerText = "Available " + available;
-  document.getElementById("reservedCount").innerText = "Reserved " + reserved;
-  document.getElementById("myCount").innerText = "My Reservation " + mine;
+  var a = document.getElementById("availableCount");
+  var r = document.getElementById("reservedCount");
+  var m = document.getElementById("myCount");
+
+  if (a) a.innerText = "Available " + available;
+  if (r) r.innerText = "Reserved " + reserved;
+  if (m) m.innerText = "My Reservation " + mine;
 }
 
 function generateSlots() {
+  if (!grid) return;
+
   grid.innerHTML = "";
   var filteredIds = getFilteredSlotIds();
   var open = isBuffBookingOpen(currentBuff);
@@ -649,13 +736,8 @@ function generateSlots() {
     var div = document.createElement("div");
     div.className = "slot";
 
-    if (id === recentBookedSlotId) {
-      div.classList.add("successFlash");
-    }
-
-    if (slot && isMyReservation(slot)) {
-      div.classList.add("myReservation");
-    }
+    if (id === recentBookedSlotId) div.classList.add("successFlash");
+    if (slot && isMyReservation(slot)) div.classList.add("myReservation");
 
     if (!open && !slot) {
       div.classList.add("locked");
@@ -690,12 +772,12 @@ function generateSlots() {
           '<span class="statusReserved">Reserved</span>' +
         '</div>' +
         '<div class="timeLocal">' + localStart + ' - ' + localEnd + '</div>' +
-  '<div class="bookingInfo compact">' +
-    '[' + escapeHtml(slot.alliance || "-") + '] ' +
-    escapeHtml(slot.player || "-") +
-    ' <span class="bookingMeta">· ' + escapeHtml(slot.daysSaved || 0) + 'd</span>' +
-  '</div>';
-      
+        '<div class="bookingInfo compact">' +
+          '[' + escapeHtml(slot.alliance || "-") + '] ' +
+          escapeHtml(slot.player || "-") +
+          ' <span class="bookingMeta">· ' + escapeHtml(slot.daysSaved || 0) + 'd</span>' +
+        '</div>';
+
       if (isMyReservation(slot)) {
         html += '<div class="statusMine">★ My reservation</div>';
       }
@@ -725,6 +807,9 @@ function renderAll() {
   updateTabBookingStateText();
 }
 
+/* =========================
+   realtime listeners
+========================= */
 function attachRealtimeListeners() {
   if (bookingUnsubscribe) {
     bookingUnsubscribe();
@@ -735,33 +820,34 @@ function attachRealtimeListeners() {
     slotsUnsubscribe = null;
   }
 
- db.collection("settings").doc("booking").onSnapshot(function (doc) {
-  if (doc.exists) {
-    var data = doc.data();
+  bookingUnsubscribe = db.collection("settings").doc("booking").onSnapshot(
+    function (doc) {
+      if (doc.exists) {
+        var data = doc.data();
 
-    bookingSettings.baseDate = data.baseDate || bookingSettings.baseDate;
+        bookingSettings.baseDate = data.baseDate || bookingSettings.baseDate;
 
-    // 🔥 기본값 정의
-    var defaultTabs = {
-      monday: { manualOpen: true, openAt: "", closeAt: "" },
-      tuesday: { manualOpen: true, openAt: "", closeAt: "" },
-      thursday: { manualOpen: true, openAt: "", closeAt: "" }
-    };
+        var defaultTabs = {
+          monday: { manualOpen: true, openAt: "", closeAt: "" },
+          tuesday: { manualOpen: true, openAt: "", closeAt: "" },
+          thursday: { manualOpen: true, openAt: "", closeAt: "" }
+        };
 
-    // 🔥 병합 (중요)
-    bookingSettings.tabs = Object.assign({}, defaultTabs, data.tabs || {});
+        bookingSettings.tabs = Object.assign({}, defaultTabs, data.tabs || {});
+        Object.keys(defaultTabs).forEach(function (key) {
+          bookingSettings.tabs[key] = Object.assign({}, defaultTabs[key], bookingSettings.tabs[key] || {});
+        });
+      }
 
-    Object.keys(defaultTabs).forEach(function (key) {
-      bookingSettings.tabs[key] = Object.assign(
-        {},
-        defaultTabs[key],
-        bookingSettings.tabs[key] || {}
-      );
-    });
-  }
-
-  renderAll();
-});
+      populateScheduleInputs();
+      refreshTimeTexts();
+      renderAll();
+    },
+    function (error) {
+      console.error("booking onSnapshot error:", error);
+      renderAll();
+    }
+  );
 
   slotsUnsubscribe = db.collection("slots").onSnapshot(
     function (snapshot) {
@@ -783,6 +869,9 @@ function loadSlots() {
   attachRealtimeListeners();
 }
 
+/* =========================
+   booking / update / cancel
+========================= */
 function validateBookingInput(alliance, player, daysSavedRaw, password) {
   if (!alliance || !player || !daysSavedRaw || !password) {
     return "모든 항목을 입력해주세요.";
@@ -842,10 +931,7 @@ function confirmBooking() {
 
   var daysSaved = Number(daysSavedRaw);
   var playerNorm = normalizeText(player);
-
   var slotRef = db.collection("slots").doc(selectedSlot);
-
-  // 같은 buff + 같은 player 1개 제한용 잠금 문서
   var playerLockId = currentBuff + "__" + playerNorm;
   var playerLockRef = db.collection("playerBookings").doc(playerLockId);
 
@@ -1079,6 +1165,9 @@ function saveAdminNote() {
     });
 }
 
+/* =========================
+   CSV / delete
+========================= */
 function csvEscape(value) {
   var str = value === undefined || value === null ? "" : String(value);
   str = str.replace(/"/g, '""');
@@ -1224,6 +1313,10 @@ function backupAndClearAll() {
       showToast("전체 삭제 중 오류가 발생했습니다.", "error");
     });
 }
+
+/* =========================
+   logs
+========================= */
 function renderLogs(snapshot) {
   var box = document.getElementById("logsBox");
   if (!box) return;
@@ -1276,23 +1369,9 @@ function loadLogs() {
     );
 }
 
-function clearSearch() {
-  var input = document.getElementById("searchInput");
-  var filter = document.getElementById("filterStatus");
-
-  if (input) input.value = "";
-  if (filter) filter.value = "all";
-  renderAll();
-}
-
-var searchInput = document.getElementById("searchInput");
-if (searchInput) {
-  searchInput.addEventListener("input", function () {
-    renderAll();
-  });
-}
-
-/* secret admin open by snow x3 */
+/* =========================
+   secret admin trigger
+========================= */
 var secretClickCount = 0;
 var secretClickTimer = null;
 
@@ -1311,22 +1390,21 @@ function registerSecretClick() {
   }
 }
 
-var snowBtn = document.getElementById("snowSecret");
-if (snowBtn) {
-  snowBtn.addEventListener("click", registerSecretClick);
-}
-
-/* snow animation */
+/* =========================
+   snow animation
+========================= */
 var canvas = document.getElementById("snow");
-var ctx = canvas.getContext("2d");
+var ctx = canvas ? canvas.getContext("2d") : null;
 var flakes = [];
 
 function resizeCanvas() {
+  if (!canvas) return;
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
 
 function initSnow() {
+  if (!canvas) return;
   resizeCanvas();
   flakes.length = 0;
 
@@ -1342,6 +1420,8 @@ function initSnow() {
 }
 
 function drawSnow() {
+  if (!canvas || !ctx) return;
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   flakes.forEach(function (f) {
@@ -1365,15 +1445,31 @@ function drawSnow() {
   requestAnimationFrame(drawSnow);
 }
 
+/* =========================
+   init
+========================= */
+var searchInput = document.getElementById("searchInput");
+if (searchInput) {
+  searchInput.addEventListener("input", function () {
+    renderAll();
+  });
+}
+
+var snowBtn = document.getElementById("snowSecret");
+if (snowBtn) {
+  snowBtn.addEventListener("click", registerSecretClick);
+}
+
 auth.onAuthStateChanged(function (user) {
   currentUser = user || null;
   checkAdminStatus();
 });
 
 window.addEventListener("resize", resizeCanvas);
-setInterval(updateCountdown, 60000);
 
-updateCountdown();
+setInterval(refreshTimeTexts, 60000);
+
+refreshTimeTexts();
 setActiveTab();
 renderAllianceSuggestions();
 initSnow();
