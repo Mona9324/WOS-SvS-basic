@@ -538,18 +538,36 @@ function logAction(type, payload) {
 function setManualBooking(buff, isOpen) {
   if (!adminAuthenticated) return;
 
-  var data = {};
-  data["tabs." + buff + ".manualOpen"] = isOpen;
+  db.collection("settings").doc("booking").get()
+    .then(function (doc) {
+      var data = doc.exists ? doc.data() : {};
+      var tabs = data.tabs || {};
 
-  db.collection("settings").doc("booking").set(data, { merge: true })
-    .then(function () {
-      if (!bookingSettings.tabs) bookingSettings.tabs = {};
-      if (!bookingSettings.tabs[buff]) {
-        bookingSettings.tabs[buff] = { manualOpen: true, openAt: "", closeAt: "" };
+      if (!tabs.monday) tabs.monday = { manualOpen: true, openAt: "", closeAt: "" };
+      if (!tabs.tuesday) tabs.tuesday = { manualOpen: true, openAt: "", closeAt: "" };
+      if (!tabs.thursday) tabs.thursday = { manualOpen: true, openAt: "", closeAt: "" };
+
+      tabs[buff].manualOpen = isOpen;
+
+      // 🔥 핵심: 수동 오픈 시 openAt 초기화
+      if (isOpen) {
+        tabs[buff].openAt = "";
       }
 
+      return db.collection("settings").doc("booking").set({
+        baseDate: data.baseDate || bookingSettings.baseDate,
+        tabs: tabs
+      });
+    })
+    .then(function () {
       bookingSettings.tabs[buff].manualOpen = isOpen;
+
+      if (isOpen) {
+        bookingSettings.tabs[buff].openAt = "";
+      }
+
       renderAll();
+      refreshTimeTexts();
 
       return logAction("set_manual_booking", {
         buff: buff,
@@ -558,16 +576,15 @@ function setManualBooking(buff, isOpen) {
     })
     .then(function () {
       showToast(
-        isOpen ? "현재 탭 예약이 열렸습니다." : "현재 탭 예약이 잠겼습니다.",
+        isOpen ? "예약이 열렸습니다." : "예약이 잠겼습니다.",
         "success"
       );
     })
     .catch(function (error) {
-      console.error("setManualBooking error:", error);
+      console.error(error);
       showToast("예약 설정 변경 중 오류가 발생했습니다.", "error");
     });
 }
-
 function populateScheduleInputs() {
   var setting = getTabSetting(currentBuff);
   var openEl = document.getElementById("scheduleOpenAt");
@@ -585,11 +602,23 @@ function saveTabSchedule() {
   var openAt = (document.getElementById("scheduleOpenAt") || {}).value || "";
   var closeAt = (document.getElementById("scheduleCloseAt") || {}).value || "";
 
-  var data = {};
-  data["tabs." + currentBuff + ".openAt"] = openAt;
-  data["tabs." + currentBuff + ".closeAt"] = closeAt;
+  db.collection("settings").doc("booking").get()
+    .then(function (doc) {
+      var data = doc.exists ? doc.data() : {};
+      var tabs = data.tabs || {};
 
-  db.collection("settings").doc("booking").set(data, { merge: true })
+      if (!tabs.monday) tabs.monday = { manualOpen: true, openAt: "", closeAt: "" };
+      if (!tabs.tuesday) tabs.tuesday = { manualOpen: true, openAt: "", closeAt: "" };
+      if (!tabs.thursday) tabs.thursday = { manualOpen: true, openAt: "", closeAt: "" };
+
+      tabs[currentBuff].openAt = openAt;
+      tabs[currentBuff].closeAt = closeAt;
+
+      return db.collection("settings").doc("booking").set({
+        baseDate: data.baseDate || bookingSettings.baseDate || "2026-03-23",
+        tabs: tabs
+      }, { merge: true });
+    })
     .then(function () {
       if (!bookingSettings.tabs) bookingSettings.tabs = {};
       if (!bookingSettings.tabs[currentBuff]) {
@@ -625,10 +654,24 @@ function saveSvsBaseDate() {
     return;
   }
 
-  db.collection("settings").doc("booking").set({ baseDate: value }, { merge: true })
+  db.collection("settings").doc("booking").get()
+    .then(function (doc) {
+      var data = doc.exists ? doc.data() : {};
+      var tabs = data.tabs || bookingSettings.tabs || {
+        monday: { manualOpen: true, openAt: "", closeAt: "" },
+        tuesday: { manualOpen: true, openAt: "", closeAt: "" },
+        thursday: { manualOpen: true, openAt: "", closeAt: "" }
+      };
+
+      return db.collection("settings").doc("booking").set({
+        baseDate: value,
+        tabs: tabs
+      }, { merge: true });
+    })
     .then(function () {
       bookingSettings.baseDate = value;
       refreshTimeTexts();
+
       return logAction("save_base_date", { baseDate: value });
     })
     .then(function () {
