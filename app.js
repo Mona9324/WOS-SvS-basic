@@ -90,6 +90,14 @@ function biToast(en, ko, type) {
   showToast(en + "\n" + ko, type);
 }
 
+function getTodayFileDate() {
+  var now = new Date();
+  var yyyy = now.getFullYear();
+  var mm = String(now.getMonth() + 1).padStart(2, "0");
+  var dd = String(now.getDate()).padStart(2, "0");
+  return yyyy + "-" + mm + "-" + dd;
+}
+
 /* =========================
    local storage helpers
 ========================= */
@@ -1268,7 +1276,8 @@ function downloadCSV(filename, rows) {
     return row.map(csvEscape).join(",");
   }).join("\n");
 
-  var blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  var BOM = "\uFEFF";
+  var blob = new Blob([BOM + csvContent], { type: "text/csv;charset=utf-8;" });
   var link = document.createElement("a");
   var url = URL.createObjectURL(blob);
 
@@ -1308,7 +1317,7 @@ function exportCurrentBuffCSV() {
     return key.indexOf(currentBuff + "_") === 0;
   });
 
-  downloadCSV("svs_" + currentBuff + "_booking.csv", buildCsvRows(keys));
+  downloadCSV("svs_" + currentBuff + "_booking_" + getTodayFileDate() + ".csv", buildCsvRows(keys));
   showToast("현재 탭 CSV를 내보냈습니다.", "success");
 }
 
@@ -1316,7 +1325,7 @@ function exportAllCSV() {
   if (!adminAuthenticated) return;
 
   var keys = Object.keys(allSlotsData);
-  downloadCSV("svs_all_booking.csv", buildCsvRows(keys));
+  downloadCSV("svs_all_booking_" + getTodayFileDate() + ".csv", buildCsvRows(keys));
   showToast("전체 CSV를 내보냈습니다.", "success");
 }
 
@@ -1456,6 +1465,102 @@ function loadLogs() {
         console.error("loadLogs error:", error);
       }
     );
+}
+
+function normalizeLogText(value) {
+  if (value === undefined || value === null) return "";
+
+  if (typeof value === "object") {
+    try {
+      value = JSON.stringify(value);
+    } catch (e) {
+      value = String(value);
+    }
+  }
+
+  return String(value)
+    .replace(/\r\n/g, " ")
+    .replace(/\n/g, " ")
+    .replace(/\r/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatLogPayloadForExcel(payload) {
+  if (!payload || typeof payload !== "object") return "";
+
+  var preferredOrder = [
+    "slotId",
+    "buff",
+    "isOpen",
+    "alliance",
+    "player",
+    "daysSaved",
+    "openAt",
+    "closeAt",
+    "baseDate",
+    "before",
+    "after"
+  ];
+
+  var used = {};
+  var parts = [];
+
+  preferredOrder.forEach(function (key) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      parts.push(key + "=" + normalizeLogText(payload[key]));
+      used[key] = true;
+    }
+  });
+
+  Object.keys(payload).sort().forEach(function (key) {
+    if (used[key]) return;
+    parts.push(key + "=" + normalizeLogText(payload[key]));
+  });
+
+  return parts.join(" | ");
+}
+
+function downloadLogsCSV() {
+  if (!adminAuthenticated) return;
+
+  db.collection("logs")
+    .orderBy("createdAt", "desc")
+    .limit(500)
+    .get()
+    .then(function (snapshot) {
+      var rows = [[
+        "Type",
+        "Time",
+        "Actor Email",
+        "Actor UID",
+        "Detail"
+      ]];
+
+      snapshot.forEach(function (doc) {
+        var data = doc.data();
+        var timeText = "";
+
+        if (data.createdAt && data.createdAt.toDate) {
+          timeText = data.createdAt.toDate().toLocaleString();
+        }
+
+        rows.push([
+          normalizeLogText(data.type || ""),
+          normalizeLogText(timeText),
+          normalizeLogText(data.actorEmail || ""),
+          normalizeLogText(data.actorUid || ""),
+          formatLogPayloadForExcel(data.payload || {})
+        ]);
+      });
+
+      downloadCSV("svs_admin_logs_" + getTodayFileDate() + ".csv", rows);
+      showToast("관리자 로그를 다운로드했습니다.", "success");
+    })
+    .catch(function (error) {
+      console.error("downloadLogsCSV error:", error);
+      showToast("관리자 로그 다운로드 중 오류가 발생했습니다.", "error");
+    });
 }
 
 /* =========================
